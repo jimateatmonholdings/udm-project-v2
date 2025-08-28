@@ -6,7 +6,8 @@
       "WebSearch",
       "Bash(mkdir:*)",
       "Bash(test:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(dir:*)"
     ],
     "deny": [],
     "ask": []
