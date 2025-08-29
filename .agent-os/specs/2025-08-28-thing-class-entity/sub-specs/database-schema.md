@@ -7,53 +7,114 @@ This is the database schema implementation for the spec detailed in @.agent-os/s
 
 ## Schema Changes
 
-### Thing Classes Table Structure
+### Core Tables Structure
 
-Based on the UDM PRD specification, the Thing Class entity requires the following primary table structure within each tenant schema:
+Based on the UDM PRD specification, the normalized attribute system requires the following table structures within each tenant schema:
 
+#### Thing Classes Table
 ```sql
 CREATE TABLE thing_classes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name VARCHAR(255) NOT NULL,
   description TEXT,
-  validation_rules JSONB DEFAULT '{}',
-  permissions JSONB DEFAULT '{}',
+  -- Common entity fields
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   created_by UUID NOT NULL,
   is_active BOOLEAN DEFAULT TRUE,
+  version INTEGER DEFAULT 1,
   
   CONSTRAINT unique_thing_class_name UNIQUE(name),
+  CONSTRAINT valid_thing_class_name CHECK (name IS NOT NULL AND trim(name) != ''),
   INDEX idx_thing_classes_active (is_active),
-  INDEX idx_thing_classes_created_at (created_at)
+  INDEX idx_thing_classes_created_at (created_at),
+  INDEX idx_thing_classes_name (name)
+);
+```
+
+#### Attributes Table
+```sql
+CREATE TABLE attributes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name VARCHAR(255) NOT NULL,
+  data_type VARCHAR(50) NOT NULL CHECK (data_type IN ('string', 'integer', 'decimal', 'boolean', 'date', 'datetime', 'json', 'reference')),
+  validation_rules JSONB DEFAULT '{}',
+  description TEXT,
+  -- Common entity fields
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  created_by UUID NOT NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  version INTEGER DEFAULT 1,
+  
+  CONSTRAINT unique_attribute_name UNIQUE(name),
+  CONSTRAINT valid_attribute_name CHECK (name IS NOT NULL AND trim(name) != ''),
+  CONSTRAINT valid_validation_rules_json CHECK (validation_rules IS NULL OR jsonb_typeof(validation_rules) = 'object'),
+  INDEX idx_attributes_data_type (data_type),
+  INDEX idx_attributes_active (is_active),
+  INDEX idx_attributes_name (name)
+);
+```
+
+#### Thing Class Attributes Assignment Table
+```sql
+CREATE TABLE thing_class_attributes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  thing_class_id UUID NOT NULL,
+  attribute_id UUID NOT NULL,
+  is_required BOOLEAN DEFAULT FALSE,
+  validation_rules JSONB DEFAULT '{}',
+  sort_order INTEGER DEFAULT 0,
+  -- Common entity fields
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  created_by UUID NOT NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  version INTEGER DEFAULT 1,
+  
+  CONSTRAINT fk_thing_class_attributes_thing_class 
+    FOREIGN KEY (thing_class_id) REFERENCES thing_classes(id) ON DELETE CASCADE,
+  CONSTRAINT fk_thing_class_attributes_attribute 
+    FOREIGN KEY (attribute_id) REFERENCES attributes(id) ON DELETE RESTRICT,
+  CONSTRAINT unique_thing_class_attribute 
+    UNIQUE(thing_class_id, attribute_id),
+  CONSTRAINT valid_assignment_rules_json CHECK (validation_rules IS NULL OR jsonb_typeof(validation_rules) = 'object'),
+  INDEX idx_thing_class_attributes_thing_class (thing_class_id),
+  INDEX idx_thing_class_attributes_attribute (attribute_id),
+  INDEX idx_thing_class_attributes_active (is_active),
+  INDEX idx_thing_class_attributes_required (is_required),
+  INDEX idx_thing_class_attributes_sort_order (sort_order)
 );
 ```
 
 ### Additional Supporting Tables
 
-#### Attribute Assignments Table
-Links Thing Classes to their available Attributes with assignment-specific constraints:
+#### Values Table
+Stores actual attribute values for Thing instances:
 
 ```sql
-CREATE TABLE attribute_assignments (
+CREATE TABLE values (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  thing_class_id UUID NOT NULL,
+  thing_id UUID NOT NULL,
   attribute_id UUID NOT NULL,
-  is_required BOOLEAN DEFAULT FALSE,
-  assignment_rules JSONB DEFAULT '{}',
+  value_data JSONB NOT NULL,
+  -- Common entity fields
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   created_by UUID NOT NULL,
   is_active BOOLEAN DEFAULT TRUE,
+  version INTEGER DEFAULT 1,
   
-  CONSTRAINT fk_assignment_thing_class 
-    FOREIGN KEY (thing_class_id) REFERENCES thing_classes(id) ON DELETE CASCADE,
-  CONSTRAINT fk_assignment_attribute 
-    FOREIGN KEY (attribute_id) REFERENCES attributes(id),
-  CONSTRAINT unique_thing_class_attribute 
-    UNIQUE(thing_class_id, attribute_id),
-  INDEX idx_assignments_thing_class (thing_class_id),
-  INDEX idx_assignments_attribute (attribute_id),
-  INDEX idx_assignments_active (is_active)
+  CONSTRAINT fk_values_thing 
+    FOREIGN KEY (thing_id) REFERENCES things(id) ON DELETE CASCADE,
+  CONSTRAINT fk_values_attribute 
+    FOREIGN KEY (attribute_id) REFERENCES attributes(id) ON DELETE RESTRICT,
+  CONSTRAINT unique_thing_attribute_value 
+    UNIQUE(thing_id, attribute_id),
+  INDEX idx_values_thing (thing_id),
+  INDEX idx_values_attribute (attribute_id),
+  INDEX idx_values_data_gin (value_data) USING GIN,
+  INDEX idx_values_active (is_active)
 );
 ```
 
@@ -107,39 +168,89 @@ SET search_path TO tenant_[company_name], public;
 
 ## Migrations
 
-### Initial Schema Creation Migration
+### Core Schema Creation Migration
 
 ```sql
--- Migration: 001_create_thing_classes_table.sql
--- Description: Create thing_classes table with full UDM specification compliance
+-- Migration: 001_create_core_udm_tables.sql
+-- Description: Create core UDM tables with normalized attribute system
 
 BEGIN;
 
+-- Create thing_classes table
 CREATE TABLE IF NOT EXISTS thing_classes (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name VARCHAR(255) NOT NULL,
   description TEXT,
-  validation_rules JSONB DEFAULT '{}',
-  permissions JSONB DEFAULT '{}',
+  -- Common entity fields
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   created_by UUID NOT NULL,
-  is_active BOOLEAN DEFAULT TRUE
+  is_active BOOLEAN DEFAULT TRUE,
+  version INTEGER DEFAULT 1,
+  
+  CONSTRAINT unique_thing_class_name UNIQUE(name),
+  CONSTRAINT valid_thing_class_name CHECK (name IS NOT NULL AND trim(name) != '')
 );
 
--- Add constraints and indexes
-ALTER TABLE thing_classes ADD CONSTRAINT unique_thing_class_name UNIQUE(name);
+-- Create attributes table
+CREATE TABLE IF NOT EXISTS attributes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name VARCHAR(255) NOT NULL,
+  data_type VARCHAR(50) NOT NULL CHECK (data_type IN ('string', 'integer', 'decimal', 'boolean', 'date', 'datetime', 'json', 'reference')),
+  validation_rules JSONB DEFAULT '{}',
+  description TEXT,
+  -- Common entity fields
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  created_by UUID NOT NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  version INTEGER DEFAULT 1,
+  
+  CONSTRAINT unique_attribute_name UNIQUE(name),
+  CONSTRAINT valid_attribute_name CHECK (name IS NOT NULL AND trim(name) != ''),
+  CONSTRAINT valid_validation_rules_json CHECK (validation_rules IS NULL OR jsonb_typeof(validation_rules) = 'object')
+);
+
+-- Create thing_class_attributes assignment table
+CREATE TABLE IF NOT EXISTS thing_class_attributes (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  thing_class_id UUID NOT NULL,
+  attribute_id UUID NOT NULL,
+  is_required BOOLEAN DEFAULT FALSE,
+  validation_rules JSONB DEFAULT '{}',
+  sort_order INTEGER DEFAULT 0,
+  -- Common entity fields
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  created_by UUID NOT NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  version INTEGER DEFAULT 1,
+  
+  CONSTRAINT fk_thing_class_attributes_thing_class 
+    FOREIGN KEY (thing_class_id) REFERENCES thing_classes(id) ON DELETE CASCADE,
+  CONSTRAINT fk_thing_class_attributes_attribute 
+    FOREIGN KEY (attribute_id) REFERENCES attributes(id) ON DELETE RESTRICT,
+  CONSTRAINT unique_thing_class_attribute 
+    UNIQUE(thing_class_id, attribute_id),
+  CONSTRAINT valid_assignment_rules_json CHECK (validation_rules IS NULL OR jsonb_typeof(validation_rules) = 'object')
+);
+
+-- Add indexes for performance
 CREATE INDEX IF NOT EXISTS idx_thing_classes_active ON thing_classes(is_active);
 CREATE INDEX IF NOT EXISTS idx_thing_classes_created_at ON thing_classes(created_at);
 CREATE INDEX IF NOT EXISTS idx_thing_classes_name ON thing_classes(name);
 
--- Add JSONB indexes for validation_rules and permissions
-CREATE INDEX IF NOT EXISTS idx_thing_classes_validation_rules_gin 
-  ON thing_classes USING GIN(validation_rules);
-CREATE INDEX IF NOT EXISTS idx_thing_classes_permissions_gin 
-  ON thing_classes USING GIN(permissions);
+CREATE INDEX IF NOT EXISTS idx_attributes_data_type ON attributes(data_type);
+CREATE INDEX IF NOT EXISTS idx_attributes_active ON attributes(is_active);
+CREATE INDEX IF NOT EXISTS idx_attributes_name ON attributes(name);
 
--- Add updated_at trigger
+CREATE INDEX IF NOT EXISTS idx_thing_class_attributes_thing_class ON thing_class_attributes(thing_class_id);
+CREATE INDEX IF NOT EXISTS idx_thing_class_attributes_attribute ON thing_class_attributes(attribute_id);
+CREATE INDEX IF NOT EXISTS idx_thing_class_attributes_active ON thing_class_attributes(is_active);
+CREATE INDEX IF NOT EXISTS idx_thing_class_attributes_required ON thing_class_attributes(is_required);
+CREATE INDEX IF NOT EXISTS idx_thing_class_attributes_sort_order ON thing_class_attributes(sort_order);
+
+-- Add updated_at trigger for all tables
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -150,6 +261,14 @@ $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER update_thing_classes_updated_at
   BEFORE UPDATE ON thing_classes
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_attributes_updated_at
+  BEFORE UPDATE ON attributes
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_thing_class_attributes_updated_at
+  BEFORE UPDATE ON thing_class_attributes
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 COMMIT;

@@ -12,20 +12,45 @@ This is the API specification for the spec detailed in @.agent-os/specs/2025-08-
 ```graphql
 type Thing {
   id: ID!
+  name: String!
   thingClass: ThingClass!
-  attributes: JSON!
+  attributeValues: [Value!]!
+  relationships: [ThingRelationship!]!
+  # Common entity fields
   createdAt: DateTime!
   updatedAt: DateTime!
-  relationships: RelationshipConnection!
+  createdBy: ID!
+  isActive: Boolean!
+  version: Int!
+  tenantId: ID!
+}
+
+type Value {
+  id: ID!
+  thingId: ID!
+  attributeId: ID!
+  thing: Thing!
+  attribute: Attribute!
+  valueData: JSON!
+  # Common entity fields
+  createdAt: DateTime!
+  updatedAt: DateTime!
+  createdBy: ID!
+  isActive: Boolean!
+  version: Int!
 }
 
 type ThingClass {
   id: ID!
   name: String!
   description: String
-  attributeSchema: JSON!
+  attributes: [ThingClassAttribute!]!
+  # Common entity fields
   createdAt: DateTime!
   updatedAt: DateTime!
+  createdBy: ID!
+  isActive: Boolean!
+  version: Int!
 }
 
 type Relationship {
@@ -85,13 +110,30 @@ type PageInfo {
 
 ```graphql
 input CreateThingInput {
-  thingClassId: ID!
-  attributes: JSON!
+  thingClassId: ID! @validate(constraint: "required")
+  name: String! @validate(constraint: "required,min=1,max=255")
 }
 
 input UpdateThingInput {
   id: ID!
-  attributes: JSON
+  name: String @validate(constraint: "min=1,max=255")
+}
+
+input CreateValueInput {
+  thingId: ID! @validate(constraint: "required")
+  attributeId: ID! @validate(constraint: "required")
+  valueData: JSON! @validate(constraint: "required")
+}
+
+input UpdateValueInput {
+  valueData: JSON! @validate(constraint: "required")
+}
+
+input CreateThingRelationshipInput {
+  sourceThingId: ID! @validate(constraint: "required")
+  targetThingId: ID! @validate(constraint: "required")
+  relationshipType: String! @validate(constraint: "required,min=1,max=100")
+  metadata: JSON
 }
 
 input ThingFiltersInput {

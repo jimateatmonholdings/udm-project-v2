@@ -9,18 +9,20 @@ This is the database schema implementation for the spec detailed in @.agent-os/s
 
 ### Things Table
 
-The core `things` table structure based on UDM PRD specifications:
+The core `things` table structure based on UDM PRD specifications (normalized approach):
 
 ```sql
 CREATE TABLE things (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     thing_class_id UUID NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    tenant_id UUID NOT NULL,
+    -- Common entity fields (consistent with normalized approach)
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     created_by UUID NOT NULL,
-    updated_by UUID NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE NOT NULL,
     version INTEGER DEFAULT 1 NOT NULL,
-    is_deleted BOOLEAN DEFAULT FALSE NOT NULL,
     
     -- Constraints
     CONSTRAINT fk_things_thing_class FOREIGN KEY (thing_class_id) REFERENCES thing_classes(id),
@@ -32,7 +34,7 @@ CREATE TABLE things (
 
 ### Values Table
 
-The `values` table for storing Thing attribute values with JSONB support:
+The `values` table for storing Thing attribute values (normalized approach):
 
 ```sql
 CREATE TABLE values (
@@ -40,11 +42,12 @@ CREATE TABLE values (
     thing_id UUID NOT NULL,
     attribute_id UUID NOT NULL,
     value_data JSONB NOT NULL,
+    -- Common entity fields (consistent with normalized approach)
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     created_by UUID NOT NULL,
-    updated_by UUID NOT NULL,
-    is_deleted BOOLEAN DEFAULT FALSE NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE NOT NULL,
+    version INTEGER DEFAULT 1 NOT NULL,
     
     -- Constraints
     CONSTRAINT fk_values_thing FOREIGN KEY (thing_id) REFERENCES things(id) ON DELETE CASCADE,
@@ -117,16 +120,60 @@ CREATE TABLE IF NOT EXISTS thing_classes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name VARCHAR(255) NOT NULL,
     description TEXT,
-    schema_definition JSONB,
+    -- Common entity fields (normalized approach - no schema_definition JSONB)
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
     created_by UUID NOT NULL,
-    updated_by UUID NOT NULL,
-    is_deleted BOOLEAN DEFAULT FALSE NOT NULL
+    is_active BOOLEAN DEFAULT TRUE NOT NULL,
+    version INTEGER DEFAULT 1 NOT NULL,
+    
+    CONSTRAINT valid_thing_class_name CHECK (name IS NOT NULL AND trim(name) != '')
 );
 
--- Index for thing_classes lookups
-CREATE INDEX idx_thing_classes_name ON thing_classes(name) WHERE is_deleted = FALSE;
+-- Supporting normalized tables (defined in thing-classes schema spec)
+CREATE TABLE IF NOT EXISTS attributes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(255) NOT NULL,
+    data_type VARCHAR(50) NOT NULL,
+    validation_rules JSONB DEFAULT '{}',
+    description TEXT,
+    -- Common entity fields
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    created_by UUID NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE NOT NULL,
+    version INTEGER DEFAULT 1 NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS thing_class_attributes (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    thing_class_id UUID NOT NULL,
+    attribute_id UUID NOT NULL,
+    is_required BOOLEAN DEFAULT FALSE,
+    validation_rules JSONB DEFAULT '{}',
+    sort_order INTEGER DEFAULT 0,
+    -- Common entity fields  
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
+    created_by UUID NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE NOT NULL,
+    version INTEGER DEFAULT 1 NOT NULL,
+    
+    CONSTRAINT fk_thing_class_attributes_thing_class 
+        FOREIGN KEY (thing_class_id) REFERENCES thing_classes(id) ON DELETE CASCADE,
+    CONSTRAINT fk_thing_class_attributes_attribute 
+        FOREIGN KEY (attribute_id) REFERENCES attributes(id) ON DELETE RESTRICT,
+    CONSTRAINT unique_thing_class_attribute 
+        UNIQUE(thing_class_id, attribute_id)
+);
+
+-- Indexes for normalized attribute system
+CREATE INDEX idx_thing_classes_name ON thing_classes(name) WHERE is_active = TRUE;
+CREATE INDEX idx_thing_classes_active ON thing_classes(is_active);
+CREATE INDEX idx_attributes_name ON attributes(name) WHERE is_active = TRUE;
+CREATE INDEX idx_attributes_data_type ON attributes(data_type) WHERE is_active = TRUE;
+CREATE INDEX idx_thing_class_attributes_thing_class ON thing_class_attributes(thing_class_id) WHERE is_active = TRUE;
+CREATE INDEX idx_thing_class_attributes_attribute ON thing_class_attributes(attribute_id) WHERE is_active = TRUE;
 ```
 
 ## Migrations
